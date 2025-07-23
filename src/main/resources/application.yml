@@ -1,0 +1,59 @@
+server:
+  port: 8081 # Gateway'in çalışacağı port
+
+spring:
+  application:
+    name: api-gateway # Eureka'ya bu isimle kaydolacak (ÇOK ÖNEMLİ!)
+  cloud:
+    gateway:
+      server:
+        webflux:
+          default-filters:
+            - DedupeResponseHeader=Vary Access-Control-Allow-Origin Access-Control-Allow-Methods Access-Control-Allow-Headers, RETAIN_FIRST
+            - RemoveResponseHeader=X-Powered-By
+          routes:
+            # Poslifay Servisi Rotası (Hem Auth hem de Kullanıcı İşlemleri)
+                    - id: poslifay_service_route # ID'yi poslifay servisi olarak güncelledik
+                      uri: lb://poslifay # Eureka'dan 'poslifay' adını çözümle
+                      predicates:
+                        # Yetkilendirme ve kullanıcı API'leri için yollar
+                        - Path=/api/users/**, /oauth2/**, /login, /.well-known/**, /jwks # Önceki auth-and-user-service yolları buraya taşındı
+                      filters:
+                        - RewritePath=/api/users/(?<segment>.*), /api/auth/${segment} # Path rewrite örneği
+
+                    # LCF Servisi Rotası
+                    - id: lcf_service_route
+                      uri: lb://lcf-service-final # Eureka'dan 'lcf-service-final' adını çözümle
+                      predicates:
+                        - Path=/api/lcf/** # LCF servisinin API prefix'i
+                      filters:
+                        - RewritePath=/api/lcf/(?<segment>.*), /api/lcf/${segment} # LCF servisinin iç path'ine uygun rewrite
+
+  # API Gateway'i bir OAuth2 Kaynak Sunucusu (Resource Server) olarak yapılandırma
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # TOKEN DOĞRULAMASI İÇİN PUBLIC KEY'LERİN ALINACAĞI JWKS ENDPOINT'İ
+          # Public endpoint poslifay servisinde olduğu için artık onu işaret ediyoruz
+          jwk-set-uri: http://localhost:8080/.well-known/jwks.json # Poslifay servisinizin portu ve JWKS endpoint'i
+          # Token veren (issuer) URL'sini de belirtmek iyi bir pratiktir
+          # issuer-uri: http://localhost:8080 # Poslifay servisinizin ana URL'si
+          # Spring Security bu JWKS'i çekecek ve gelen token'ları bu public key'lerle doğrulayacak.
+
+eureka:
+  client:
+    register-with-eureka: true
+    fetch-registry: true
+    serviceUrl:
+      defaultZone: http://localhost:8761/eureka/
+
+  instance:
+    prefer-ip-address: true
+
+logging:
+  level:
+    org.springframework.cloud.gateway: DEBUG
+    org.springframework.security: DEBUG
+    org.springframework.cloud.netflix: DEBUG
+    com.poslifayproject.apigateway: DEBUG
